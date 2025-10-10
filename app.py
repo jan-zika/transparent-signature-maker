@@ -33,6 +33,7 @@ def validate_image(uploaded_file):
     except Exception:
         return False
 
+
 def load_image(uploaded_file):
     """Load image from uploaded file as numpy array."""
     try:
@@ -41,6 +42,7 @@ def load_image(uploaded_file):
     except Exception as e:
         st.error(f"Error loading image: {str(e)}")
         return None
+
 
 def auto_crop_signature(image, padding=10):
     """Automatically crop signature region from image."""
@@ -65,6 +67,7 @@ def auto_crop_signature(image, padding=10):
         st.error(f"Error in auto-cropping: {str(e)}")
         return image, (0, 0, image.shape[1], image.shape[0])
 
+
 def manual_crop(image, x_start, y_start, x_end, y_end):
     """Crop image manually based on slider values."""
     try:
@@ -72,6 +75,7 @@ def manual_crop(image, x_start, y_start, x_end, y_end):
     except Exception as e:
         st.error(f"Error in manual cropping: {str(e)}")
         return image
+
 
 def apply_threshold(image, threshold_value=150):
     """Simple and robust threshold for scanned signatures."""
@@ -82,6 +86,7 @@ def apply_threshold(image, threshold_value=150):
     except Exception as e:
         st.error(f"Error in thresholding: {str(e)}")
         return None
+
 
 def refine_edges(mask, kernel_size=2):
     """Apply morphological operations to refine edges."""
@@ -96,6 +101,7 @@ def refine_edges(mask, kernel_size=2):
         st.error(f"Error in edge refinement: {str(e)}")
         return mask
 
+
 def create_transparent_signature(image, mask, ink_color):
     """Create transparent PNG with chosen ink color."""
     try:
@@ -108,6 +114,7 @@ def create_transparent_signature(image, mask, ink_color):
     except Exception as e:
         st.error(f"Error creating transparent image: {str(e)}")
         return None
+
 
 def process_signature(image, crop_bounds, threshold_value, ink_color, edge_refinement, kernel_size):
     """Complete processing pipeline."""
@@ -125,6 +132,7 @@ def process_signature(image, crop_bounds, threshold_value, ink_color, edge_refin
         st.error(f"Error processing signature: {str(e)}")
         return None
 
+
 def image_to_bytes(image_array):
     """Convert numpy array to bytes for download."""
     try:
@@ -135,6 +143,7 @@ def image_to_bytes(image_array):
     except Exception as e:
         st.error(f"Error converting image: {str(e)}")
         return None
+
 
 # ============================================================
 # Main App
@@ -214,7 +223,7 @@ def main():
         col1, col2 = st.columns(2)
         with col1:
             st.subheader("Original Image")
-            st.image(st.session_state.original_image, use_container_width=True)
+            st.image(st.session_state.original_image, width="stretch")
 
         with col2:
             st.subheader("Processed Transparent Signature")
@@ -222,12 +231,19 @@ def main():
                 # Checkerboard background for transparency preview
                 h, w, _ = st.session_state.processed_image.shape
                 tile = 20
-                cb = np.kron([[240, 200] * (w // (2 * tile)), [200, 240] * (w // (2 * tile))],
-                             np.ones((tile, tile)))
-                checker = cv2.merge([cb[:h, :w], cb[:h, :w], cb[:h, :w]])
-                overlay = cv2.addWeighted(checker.astype(np.uint8), 0.8,
-                                          st.session_state.processed_image[:, :, :3], 1.0, 0)
-                st.image(overlay, use_container_width=True, caption="Transparency preview")
+                pattern = np.array([[240, 200], [200, 240]], dtype=np.uint8)
+                tiles_y = int(np.ceil(h / (2 * tile)))
+                tiles_x = int(np.ceil(w / (2 * tile)))
+                cb = np.tile(pattern, (tiles_y * tile, tiles_x * tile))
+                cb = cb[:h, :w]
+                checker = cv2.merge([cb, cb, cb])
+
+                overlay = cv2.addWeighted(
+                    checker.astype(np.uint8), 0.8,
+                    st.session_state.processed_image[:, :, :3], 1.0, 0
+                )
+
+                st.image(overlay, width="stretch", caption="Transparency preview")
 
                 # Download
                 img_bytes = image_to_bytes(st.session_state.processed_image)
@@ -244,6 +260,7 @@ def main():
                 st.info("Adjust parameters to generate the transparent signature.")
     else:
         st.info("Upload a scanned signature to begin.")
+
 
 if __name__ == "__main__":
     main()
