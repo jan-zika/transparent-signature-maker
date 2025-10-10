@@ -1,4 +1,3 @@
-Python 3.12+
 streamlit
 opencv-python-headless
 numpy
