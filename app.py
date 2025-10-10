@@ -44,37 +44,54 @@ def load_image(uploaded_file):
         return None
 
 
-def auto_crop_signature(image, padding=10):
-    """Automatically crop signature region from image."""
+def auto_crop_signature(image, padding=10, min_area_ratio=0.001, max_distance_ratio=0.15):
+    """
+    Automatically crop signature region from image, ignoring small isolated dots.
+    Groups nearby contours and ignores outliers.
+    """
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) if len(image.shape) == 3 else image.copy()
         _, binary = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)
+
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            return image, (0, 0, image.shape[1], image.shape[0])
 
-        if contours:
-            x_min, y_min = image.shape[1], image.shape[0]
-            x_max, y_max = 0, 0
-            for contour in contours:
-                x, y, w, h = cv2.boundingRect(contour)
-                x_min, y_min = min(x_min, x), min(y_min, y)
-                x_max, y_max = max(x_max, x + w), max(y_max, y + h)
-            x_min, y_min = max(0, x_min - padding), max(0, y_min - padding)
-            x_max, y_max = min(image.shape[1], x_max + padding), min(image.shape[0], y_max + padding)
-            return image[y_min:y_max, x_min:x_max], (x_min, y_min, x_max, y_max)
+        # Filter small noise
+        h, w = gray.shape
+        min_area = h * w * min_area_ratio
+        contours = [c for c in contours if cv2.contourArea(c) > min_area]
+        if not contours:
+            return image, (0, 0, image.shape[1], image.shape[0])
 
-        return image, (0, 0, image.shape[1], image.shape[0])
+        # Compute centroids
+        centroids = np.array([np.mean(c.reshape(-1, 2), axis=0) for c in contours])
+        overall_center = np.mean(centroids, axis=0)
+        max_distance = np.sqrt(h**2 + w**2) * max_distance_ratio
+
+        # Keep contours close to main cluster
+        dists = np.linalg.norm(centroids - overall_center, axis=1)
+        filtered = [c for c, d in zip(contours, dists) if d < max_distance]
+
+        if not filtered:
+            filtered = contours
+
+        # Bounding box over filtered contours
+        x_min, y_min = image.shape[1], image.shape[0]
+        x_max, y_max = 0, 0
+        for c in filtered:
+            x, y, cw, ch = cv2.boundingRect(c)
+            x_min, y_min = min(x_min, x), min(y_min, y)
+            x_max, y_max = max(x_max, x + cw), max(y_max, y + ch)
+
+        x_min, y_min = max(0, x_min - padding), max(0, y_min - padding)
+        x_max, y_max = min(image.shape[1], x_max + padding)
+        y_max = min(image.shape[0], y_max + padding)
+
+        return image[y_min:y_max, x_min:x_max], (x_min, y_min, x_max, y_max)
     except Exception as e:
         st.error(f"Error in auto-cropping: {str(e)}")
         return image, (0, 0, image.shape[1], image.shape[0])
-
-
-def manual_crop(image, x_start, y_start, x_end, y_end):
-    """Crop image manually based on slider values."""
-    try:
-        return image[y_start:y_end, x_start:x_end]
-    except Exception as e:
-        st.error(f"Error in manual cropping: {str(e)}")
-        return image
 
 
 def apply_threshold(image, threshold_value=150):
@@ -187,11 +204,15 @@ def main():
                 st.subheader("Manual crop")
                 col1, col2 = st.columns(2)
                 with col1:
-                    x_start = st.slider("Left", 0, image.shape[1], 0)
-                    y_start = st.slider("Top", 0, image.shape[0], 0)
+                    x_start = st.slider("Crop from left (px)", 0, image.shape[1] // 2, 0)
+                    y_start = st.slider("Crop from top (px)", 0, image.shape[0] // 2, 0)
                 with col2:
-                    x_end = st.slider("Right", 0, image.shape[1], image.shape[1])
-                    y_end = st.slider("Bottom", 0, image.shape[0], image.shape[0])
+                    x_end_margin = st.slider("Crop from right (px)", 0, image.shape[1] // 2, 0)
+                    y_end_margin = st.slider("Crop from bottom (px)", 0, image.shape[0] // 2, 0)
+
+                # Convert margin sliders to coordinates
+                x_end = image.shape[1] - x_end_margin
+                y_end = image.shape[0] - y_end_margin
                 crop_bounds = (x_start, y_start, x_end, y_end)
                 st.session_state.cropped_image = manual_crop(image, *crop_bounds)
 
@@ -233,8 +254,8 @@ def main():
                 h, w, _ = rgba.shape
 
                 # Create checkerboard background
-                tile = 20
-                pattern = np.array([[240, 200], [200, 240]], dtype=np.uint8)
+                tile = 30
+                pattern = np.array([[230, 180], [180, 230]], dtype=np.uint8)
                 tiles_y = int(np.ceil(h / (2 * tile)))
                 tiles_x = int(np.ceil(w / (2 * tile)))
                 cb = np.tile(pattern, (tiles_y * tile, tiles_x * tile))
