@@ -284,15 +284,19 @@ def main():
 
     # Main content area
     if st.session_state.original_image is not None:
-        col1, col2 = st.columns(2)
+        # Align headings and images in the same row
+        col1, col2 = st.columns(2, gap="large")
         with col1:
-            st.subheader("Original Image")
+            st.markdown("<h4 style='text-align:center;'>Original Image</h4>", unsafe_allow_html=True)
+        with col2:
+            st.markdown("<h4 style='text-align:center;'>Processed Signature</h4>", unsafe_allow_html=True)
+
+        col1, col2 = st.columns(2, gap="large")
+        with col1:
             st.image(st.session_state.original_image, width="stretch")
 
         with col2:
-            st.subheader("Processed Transparent Signature")
             if st.session_state.processed_image is not None:
-                # True transparency preview (checkerboard + alpha compositing)
                 rgba = st.session_state.processed_image
                 h, w, _ = rgba.shape
 
@@ -305,16 +309,15 @@ def main():
                 cb = cb[:h, :w]
                 checker_bg = cv2.merge([cb, cb, cb]).astype(np.uint8)
 
-                # Extract alpha and normalize
+                # Proper alpha compositing over checkerboard
                 alpha = rgba[:, :, 3].astype(float) / 255.0
                 rgb = rgba[:, :, :3].astype(float)
-
-                # Proper alpha compositing over checkerboard
                 composite = (rgb * alpha[..., None] + checker_bg * (1 - alpha[..., None])).astype(np.uint8)
 
+                # Display composite with single descriptive caption
                 st.image(composite, width="stretch", caption="Transparency preview")
 
-                # Download
+                # Download button
                 img_bytes = image_to_bytes(rgba)
                 if img_bytes:
                     filename = uploaded_file.name.rsplit('.', 1)[0] + "_transparent.png"
@@ -327,6 +330,8 @@ def main():
                     )
             else:
                 st.info("Adjust parameters to generate the transparent signature.")
+    else:
+        st.info("Upload a scanned signature to begin.")
 
 
 if __name__ == "__main__":
