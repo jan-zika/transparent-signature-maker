@@ -364,7 +364,7 @@ def main():
                     st.markdown("---")
                     img_bytes = image_to_bytes(st.session_state.processed_image)
                     if img_bytes:
-                        filename = uploaded_file.name.rsplit('.', 1)[0] + "_signature.png"
+                        filename = uploaded_file.name.rsplit('.', 1)[0] + "_transparent.png"
                         col_dl1, col_dl2 = st.columns(2)
                         with col_dl1:
                             st.download_button(
