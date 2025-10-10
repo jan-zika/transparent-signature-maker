@@ -248,12 +248,31 @@ def main():
     
     # Sidebar controls
     with st.sidebar:
-        st.header("📤 Upload Signature")
+        # === Upload Signature ===
+        st.markdown(
+            """
+            <h3 style="display:flex;align-items:center;gap:6px;margin-top:0;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"
+                     fill="none" stroke="currentColor" stroke-width="2"
+                     stroke-linecap="round" stroke-linejoin="round"
+                     class="feather feather-upload">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                Upload Signature
+            </h3>
+            """,
+            unsafe_allow_html=True
+        )
+        
+        # st.header("📤 Upload Signature")
         uploaded_file = st.file_uploader(
             "Choose an image file",
             type=['jpg', 'jpeg', 'png'],
             help="Upload a clear photo or scan of your signature"
         )
+
         
         if uploaded_file is not None:
             if not validate_image(uploaded_file):
