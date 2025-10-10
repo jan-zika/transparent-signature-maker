@@ -47,60 +47,69 @@ def load_image(uploaded_file):
 def auto_crop_signature(image, padding=10, min_area_ratio=0.001, max_distance_ratio=0.15):
     """
     Automatically crop signature region from image, ignoring small isolated dots.
-    Groups nearby contours and ignores outliers. Works across all OpenCV return formats.
+    Groups nearby contours and ignores outliers. Guaranteed to work with any OpenCV build.
     """
     try:
-        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) if len(image.shape) == 3 else image.copy()
-        _, binary = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)
+        import cv2 as cv  # explicitly reimport to avoid shadowing
 
-        # --- Robust handling of different cv2.findContours() return signatures ---
-        result = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Convert to grayscale
+        gray = cv.cvtColor(image, cv.COLOR_RGB2GRAY) if len(image.shape) == 3 else image.copy()
 
+        # Threshold to get binary mask
+        _, binary = cv.threshold(gray, 240, 255, cv.THRESH_BINARY_INV)
+
+        # Find contours robustly, handling any OpenCV version
+        find_contours = getattr(cv, "findContours", None)
+        if not callable(find_contours):
+            st.error("cv2.findContours not callable; OpenCV may be corrupted.")
+            return image, (0, 0, image.shape[1], image.shape[0])
+
+        result = find_contours(binary, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+
+        # Normalize return (some builds return 2, some 3 values)
         if isinstance(result, tuple):
-            # Typical 2- or 3-element tuple
             if len(result) == 2:
                 contours, hierarchy = result
             elif len(result) == 3:
-                _, contours, hierarchy = result
+                _img, contours, hierarchy = result
             else:
-                st.error("Unexpected cv2.findContours return length.")
-                return image, (0, 0, image.shape[1], image.shape[0])
+                contours = []
         else:
-            # Defensive fallback — result is a single non-iterable object
-            st.error("cv2.findContours returned an unexpected type.")
+            st.error("Unexpected findContours return type.")
             return image, (0, 0, image.shape[1], image.shape[0])
 
         if not contours:
             return image, (0, 0, image.shape[1], image.shape[0])
 
-        # --- Filter out very small areas (noise, dust) ---
+        # Filter very small noise areas
         h, w = gray.shape
         min_area = h * w * min_area_ratio
-        contours = [c for c in contours if cv2.contourArea(c) > min_area]
+        contours = [c for c in contours if cv.contourArea(c) > min_area]
         if not contours:
             return image, (0, 0, image.shape[1], image.shape[0])
 
-        # --- Compute centroids and remove distant outliers ---
+        # Compute centroids
         centroids = np.array([np.mean(c.reshape(-1, 2), axis=0) for c in contours])
         overall_center = np.mean(centroids, axis=0)
         max_distance = np.sqrt(h**2 + w**2) * max_distance_ratio
 
+        # Keep only contours near main cluster
         dists = np.linalg.norm(centroids - overall_center, axis=1)
         filtered = [c for c, d in zip(contours, dists) if d < max_distance]
         if not filtered:
             filtered = contours
 
-        # --- Bounding box over filtered contours ---
-        x_min, y_min = image.shape[1], image.shape[0]
+        # Bounding box of filtered contours
+        x_min, y_min = w, h
         x_max, y_max = 0, 0
         for c in filtered:
-            x, y, cw, ch = cv2.boundingRect(c)
+            x, y, cw, ch = cv.boundingRect(c)
             x_min, y_min = min(x_min, x), min(y_min, y)
             x_max, y_max = max(x_max, x + cw), max(y_max, y + ch)
 
+        # Apply padding safely
         x_min, y_min = max(0, x_min - padding), max(0, y_min - padding)
-        x_max, y_max = min(image.shape[1], x_max + padding)
-        y_max = min(image.shape[0], y_max + padding)
+        x_max, y_max = min(w, x_max + padding), min(h, y_max + padding)
 
         return image[y_min:y_max, x_min:x_max], (x_min, y_min, x_max, y_max)
 
