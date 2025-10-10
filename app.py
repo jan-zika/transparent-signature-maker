@@ -170,48 +170,46 @@ def process_signature(image, threshold_value=150, ink_color="#000000", smooth_ed
 def create_preview(rgba_image, bg_type="white"):
     """
     Create a preview of the transparent signature.
-    Dynamically scales the checkerboard size so it appears consistent
-    regardless of the image's pixel resolution or Streamlit canvas size.
+    Shows signature on white or checkerboard background.
     """
     try:
         h, w = rgba_image.shape[:2]
-
+        
         if bg_type == "checkerboard":
-            # === Dynamic checkerboard scaling ===
-            base_tile = 20             # logical tile size (visible pixel size)
-            display_width_px = 800     # approximate display width in Streamlit
-            scale_factor = max(1, int((w / display_width_px) * base_tile))
-            tile_size = scale_factor
-
-            # Build checkerboard background
+            # Create checkerboard pattern
+            tile_size = 20
             tiles_x = (w + tile_size - 1) // tile_size
             tiles_y = (h + tile_size - 1) // tile_size
+            
             checkerboard = np.zeros((h, w, 3), dtype=np.uint8)
-
-            light_color = [240, 240, 240]
-            dark_color = [200, 200, 200]
-
             for i in range(tiles_y):
                 for j in range(tiles_x):
-                    color = light_color if (i + j) % 2 == 0 else dark_color
-                    y1, x1 = i * tile_size, j * tile_size
-                    y2, x2 = min(y1 + tile_size, h), min(x1 + tile_size, w)
-                    checkerboard[y1:y2, x1:x2] = color
-
+                    if (i + j) % 2 == 0:
+                        y1 = i * tile_size
+                        x1 = j * tile_size
+                        y2 = min(y1 + tile_size, h)
+                        x2 = min(x1 + tile_size, w)
+                        checkerboard[y1:y2, x1:x2] = [240, 240, 240]
+                    else:
+                        y1 = i * tile_size
+                        x1 = j * tile_size
+                        y2 = min(y1 + tile_size, h)
+                        x2 = min(x1 + tile_size, w)
+                        checkerboard[y1:y2, x1:x2] = [200, 200, 200]
             background = checkerboard
         else:
-            # Plain white background
+            # White background
             background = np.ones((h, w, 3), dtype=np.uint8) * 255
-
-        # === Alpha compositing ===
+        
+        # Alpha composite
         alpha = rgba_image[:, :, 3:4].astype(float) / 255.0
         rgb = rgba_image[:, :, :3].astype(float)
-
+        
         composite = rgb * alpha + background.astype(float) * (1 - alpha)
         composite = composite.astype(np.uint8)
-
+        
         return composite
-
+        
     except Exception as e:
         st.error(f"Error creating preview: {str(e)}")
         return None
@@ -234,7 +232,7 @@ def image_to_bytes(image_array):
 # ============================================================
 
 def main():
-    st.title("Transparent Signature Maker")
+    st.title("🖊️ Transparent Signature Maker")
     st.markdown("""
     Convert your scanned signature into a clean, transparent PNG ready for digital documents.
     
