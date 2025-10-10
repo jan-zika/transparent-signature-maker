@@ -47,17 +47,26 @@ def load_image(uploaded_file):
 def auto_crop_signature(image, padding=10, min_area_ratio=0.001, max_distance_ratio=0.15):
     """
     Automatically crop signature region from image, ignoring small isolated dots.
-    Groups nearby contours and ignores outliers.
+    Groups nearby contours and ignores outliers for robust cropping.
     """
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) if len(image.shape) == 3 else image.copy()
         _, binary = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)
 
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # Handle different OpenCV return formats safely
+        contours_data = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if len(contours_data) == 2:
+            contours, _ = contours_data
+        elif len(contours_data) == 3:
+            _, contours, _ = contours_data
+        else:
+            st.error("Unexpected return value from cv2.findContours()")
+            return image, (0, 0, image.shape[1], image.shape[0])
+
         if not contours:
             return image, (0, 0, image.shape[1], image.shape[0])
 
-        # Filter small noise
+        # Filter out very small areas (noise, dust)
         h, w = gray.shape
         min_area = h * w * min_area_ratio
         contours = [c for c in contours if cv2.contourArea(c) > min_area]
@@ -72,7 +81,6 @@ def auto_crop_signature(image, padding=10, min_area_ratio=0.001, max_distance_ra
         # Keep contours close to main cluster
         dists = np.linalg.norm(centroids - overall_center, axis=1)
         filtered = [c for c, d in zip(contours, dists) if d < max_distance]
-
         if not filtered:
             filtered = contours
 
@@ -92,6 +100,25 @@ def auto_crop_signature(image, padding=10, min_area_ratio=0.001, max_distance_ra
     except Exception as e:
         st.error(f"Error in auto-cropping: {str(e)}")
         return image, (0, 0, image.shape[1], image.shape[0])
+
+
+def manual_crop(image, x_start, y_start, x_end, y_end):
+    """Crop image manually based on slider values."""
+    try:
+        # Ensure coordinates are within image bounds
+        x_start = max(0, min(x_start, image.shape[1]))
+        x_end = max(0, min(x_end, image.shape[1]))
+        y_start = max(0, min(y_start, image.shape[0]))
+        y_end = max(0, min(y_end, image.shape[0]))
+
+        if x_end <= x_start or y_end <= y_start:
+            st.warning("Invalid crop dimensions; returning original image.")
+            return image
+
+        return image[y_start:y_end, x_start:x_end]
+    except Exception as e:
+        st.error(f"Error in manual cropping: {str(e)}")
+        return image
 
 
 def apply_threshold(image, threshold_value=150):
