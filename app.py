@@ -248,7 +248,7 @@ def main():
     
     # Sidebar controls
     with st.sidebar:
-        st.markdown("### ⬆︎ Upload Signature")
+        st.header("📤 Upload Signature")
         uploaded_file = st.file_uploader(
             "Choose an image file",
             type=['jpg', 'jpeg', 'png'],
@@ -269,7 +269,7 @@ def main():
             st.success("✅ Image uploaded successfully!")
             
             # Cropping section
-            st.markdown("### ✂︎ Cropping")
+            st.header("✂️ Cropping")
             crop_mode = st.radio(
                 "Crop mode",
                 ["Auto-crop", "Manual crop", "No crop"],
@@ -292,7 +292,7 @@ def main():
                 cropped = image
             
             # Processing settings
-            st.markdown("### ⚙︎ Signature Settings")
+            st.header("🎨 Signature Settings")
             
             threshold = st.slider(
                 "Background removal",
@@ -309,7 +309,7 @@ def main():
                 help="Choose the color for your signature"
             )
             
-            st.markdown("### ✧ Enhancement")
+            st.header("✨ Enhancement")
             smooth_edges = st.checkbox("Smooth edges", value=True)
             smooth_strength = 2
             if smooth_edges:
@@ -322,7 +322,7 @@ def main():
                 )
             
             # Preview background
-            st.markdown("### 👁 Preview Options")
+            st.header("👁️ Preview Options")
             preview_bg = st.radio(
                 "Preview background",
                 ["White", "Checkerboard"],
