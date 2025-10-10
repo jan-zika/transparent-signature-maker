@@ -248,25 +248,7 @@ def main():
     
     # Sidebar controls
     with st.sidebar:
-        # === Upload Signature ===
-        st.markdown(
-            """
-            <h3 style="display:flex;align-items:center;gap:6px;margin-top:0;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"
-                     fill="none" stroke="currentColor" stroke-width="2"
-                     stroke-linecap="round" stroke-linejoin="round"
-                     class="feather feather-upload">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-                    <polyline points="17 8 12 3 7 8"/>
-                    <line x1="12" y1="3" x2="12" y2="15"/>
-                </svg>
-                Upload Signature
-            </h3>
-            """,
-            unsafe_allow_html=True
-        )
-        
-        # st.header("📤 Upload Signature")
+        st.markdown("### ⬆︎ Upload Signature")
         uploaded_file = st.file_uploader(
             "Choose an image file",
             type=['jpg', 'jpeg', 'png'],
@@ -287,7 +269,7 @@ def main():
             st.success("✅ Image uploaded successfully!")
             
             # Cropping section
-            st.header("✂️ Cropping")
+            st.markdown("### ✂︎ Cropping")
             crop_mode = st.radio(
                 "Crop mode",
                 ["Auto-crop", "Manual crop", "No crop"],
@@ -310,7 +292,7 @@ def main():
                 cropped = image
             
             # Processing settings
-            st.header("🎨 Signature Settings")
+            st.markdown("### ⚙︎ Signature Settings")
             
             threshold = st.slider(
                 "Background removal",
@@ -327,7 +309,7 @@ def main():
                 help="Choose the color for your signature"
             )
             
-            st.header("✨ Enhancement")
+            st.markdown("### ✧ Enhancement")
             smooth_edges = st.checkbox("Smooth edges", value=True)
             smooth_strength = 2
             if smooth_edges:
@@ -340,7 +322,7 @@ def main():
                 )
             
             # Preview background
-            st.header("👁️ Preview Options")
+            st.markdown("### 👁 Preview Options")
             preview_bg = st.radio(
                 "Preview background",
                 ["White", "Checkerboard"],
