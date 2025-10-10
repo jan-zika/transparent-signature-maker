@@ -9,7 +9,8 @@ import io
 # ============================================================
 st.set_page_config(
     page_title="Transparent Signature Maker",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 # Initialize session state
@@ -17,8 +18,6 @@ if 'processed_image' not in st.session_state:
     st.session_state.processed_image = None
 if 'original_image' not in st.session_state:
     st.session_state.original_image = None
-if 'cropped_image' not in st.session_state:
-    st.session_state.cropped_image = None
 
 # ============================================================
 # Helper Functions
@@ -29,6 +28,7 @@ def validate_image(uploaded_file):
     try:
         img = Image.open(uploaded_file)
         img.verify()
+        uploaded_file.seek(0)  # Reset file pointer after verify
         return True
     except Exception:
         return False
@@ -37,168 +37,190 @@ def validate_image(uploaded_file):
 def load_image(uploaded_file):
     """Load image from uploaded file as numpy array."""
     try:
-        image = Image.open(uploaded_file)
+        image = Image.open(uploaded_file).convert('RGB')
         return np.array(image)
     except Exception as e:
         st.error(f"Error loading image: {str(e)}")
         return None
 
 
-def auto_crop_signature(image, padding=10, min_area_ratio=0.001, max_distance_ratio=0.15):
+def auto_crop_signature(image, padding=20):
     """
-    Automatically crop signature region from image, ignoring small isolated dots.
-    Groups nearby contours and ignores outliers. Guaranteed to work with any OpenCV build.
+    Reliably auto-crop signature region from image.
+    Uses adaptive thresholding and contour analysis to find the main signature area.
     """
     try:
-        import cv2 as cv  # explicitly reimport to avoid shadowing
-
-        # Convert to grayscale
-        gray = cv.cvtColor(image, cv.COLOR_RGB2GRAY) if len(image.shape) == 3 else image.copy()
-
-        # Threshold to get binary mask
-        _, binary = cv.threshold(gray, 240, 255, cv.THRESH_BINARY_INV)
-
-        # Find contours robustly, handling any OpenCV version
-        find_contours = getattr(cv, "findContours", None)
-        if not callable(find_contours):
-            st.error("cv2.findContours not callable; OpenCV may be corrupted.")
-            return image, (0, 0, image.shape[1], image.shape[0])
-
-        result = find_contours(binary, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-
-        # Normalize return (some builds return 2, some 3 values)
-        if isinstance(result, tuple):
-            if len(result) == 2:
-                contours, hierarchy = result
-            elif len(result) == 3:
-                _img, contours, hierarchy = result
-            else:
-                contours = []
+        # Ensure we're working with RGB
+        if len(image.shape) == 2:
+            gray = image
         else:
-            st.error("Unexpected findContours return type.")
-            return image, (0, 0, image.shape[1], image.shape[0])
-
+            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        
+        # Apply adaptive thresholding for better results on varying backgrounds
+        binary = cv2.adaptiveThreshold(
+            gray, 255, 
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
+            cv2.THRESH_BINARY_INV,
+            blockSize=21,
+            C=10
+        )
+        
+        # Apply slight blur to connect nearby components
+        kernel = np.ones((3, 3), np.uint8)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+        
+        # Find contours
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
         if not contours:
-            return image, (0, 0, image.shape[1], image.shape[0])
-
-        # Filter very small noise areas
-        h, w = gray.shape
-        min_area = h * w * min_area_ratio
-        contours = [c for c in contours if cv.contourArea(c) > min_area]
-        if not contours:
-            return image, (0, 0, image.shape[1], image.shape[0])
-
-        # Compute centroids
-        centroids = np.array([np.mean(c.reshape(-1, 2), axis=0) for c in contours])
-        overall_center = np.mean(centroids, axis=0)
-        max_distance = np.sqrt(h**2 + w**2) * max_distance_ratio
-
-        # Keep only contours near main cluster
-        dists = np.linalg.norm(centroids - overall_center, axis=1)
-        filtered = [c for c, d in zip(contours, dists) if d < max_distance]
-        if not filtered:
-            filtered = contours
-
-        # Bounding box of filtered contours
-        x_min, y_min = w, h
-        x_max, y_max = 0, 0
-        for c in filtered:
-            x, y, cw, ch = cv.boundingRect(c)
-            x_min, y_min = min(x_min, x), min(y_min, y)
-            x_max, y_max = max(x_max, x + cw), max(y_max, y + ch)
-
-        # Apply padding safely
-        x_min, y_min = max(0, x_min - padding), max(0, y_min - padding)
-        x_max, y_max = min(w, x_max + padding), min(h, y_max + padding)
-
-        return image[y_min:y_max, x_min:x_max], (x_min, y_min, x_max, y_max)
-
-    except Exception as e:
-        st.error(f"Error in auto-cropping: {str(e)}")
-        return image, (0, 0, image.shape[1], image.shape[0])
-
-
-def manual_crop(image, x_start, y_start, x_end, y_end):
-    """Crop image manually based on slider values."""
-    try:
-        # Ensure coordinates are within image bounds
-        x_start = max(0, min(x_start, image.shape[1]))
-        x_end = max(0, min(x_end, image.shape[1]))
-        y_start = max(0, min(y_start, image.shape[0]))
-        y_end = max(0, min(y_end, image.shape[0]))
-
-        if x_end <= x_start or y_end <= y_start:
-            st.warning("Invalid crop dimensions; returning original image.")
             return image
+        
+        # Filter out tiny noise (less than 0.1% of image area)
+        h, w = gray.shape
+        min_area = h * w * 0.001
+        valid_contours = [c for c in contours if cv2.contourArea(c) > min_area]
+        
+        if not valid_contours:
+            return image
+        
+        # Find the bounding box of all valid contours
+        all_points = np.vstack(valid_contours)
+        x, y, w, h = cv2.boundingRect(all_points)
+        
+        # Add padding
+        x = max(0, x - padding)
+        y = max(0, y - padding)
+        w = min(image.shape[1] - x, w + 2 * padding)
+        h = min(image.shape[0] - y, h + 2 * padding)
+        
+        # Crop the image
+        cropped = image[y:y+h, x:x+w]
+        
+        # Ensure we return something valid
+        if cropped.size == 0:
+            return image
+            
+        return cropped
+        
+    except Exception as e:
+        st.warning(f"Auto-crop failed, using original image: {str(e)}")
+        return image
 
+
+def manual_crop(image, left, top, right, bottom):
+    """Crop image manually based on pixel margins."""
+    try:
+        h, w = image.shape[:2]
+        
+        # Convert margins to coordinates
+        x_start = max(0, left)
+        y_start = max(0, top)
+        x_end = max(x_start + 1, w - right)
+        y_end = max(y_start + 1, h - bottom)
+        
         return image[y_start:y_end, x_start:x_end]
     except Exception as e:
         st.error(f"Error in manual cropping: {str(e)}")
         return image
 
 
-def apply_threshold(image, threshold_value=150):
-    """Simple and robust threshold for scanned signatures."""
+def process_signature(image, threshold_value=150, ink_color="#000000", smooth_edges=True, smooth_strength=2):
+    """
+    Convert image to transparent signature with specified ink color.
+    """
     try:
-        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) if len(image.shape) == 3 else image.copy()
+        # Convert to grayscale if needed
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        else:
+            gray = image.copy()
+        
+        # Apply threshold to create mask
         _, mask = cv2.threshold(gray, threshold_value, 255, cv2.THRESH_BINARY_INV)
-        return mask
-    except Exception as e:
-        st.error(f"Error in thresholding: {str(e)}")
-        return None
-
-
-def refine_edges(mask, kernel_size=2):
-    """Apply morphological operations to refine edges."""
-    try:
-        kernel = np.ones((kernel_size, kernel_size), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        if kernel_size > 1:
-            mask = cv2.dilate(mask, kernel, iterations=1)
-        return mask
-    except Exception as e:
-        st.error(f"Error in edge refinement: {str(e)}")
-        return mask
-
-
-def create_transparent_signature(image, mask, ink_color):
-    """Create transparent PNG with chosen ink color."""
-    try:
+        
+        # Apply edge smoothing if requested
+        if smooth_edges and smooth_strength > 1:
+            kernel = np.ones((smooth_strength, smooth_strength), np.uint8)
+            # Clean up small noise
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+            # Close small gaps
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+            # Slight dilation to restore stroke thickness
+            if smooth_strength > 2:
+                mask = cv2.dilate(mask, kernel, iterations=1)
+        
+        # Parse ink color
         hex_color = ink_color.lstrip('#')
-        rgb = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        r, g, b = tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+        
+        # Create RGBA image
         h, w = mask.shape
-        transparent = np.zeros((h, w, 4), dtype=np.uint8)
-        transparent[mask > 0] = (*rgb, 255)
-        return transparent
-    except Exception as e:
-        st.error(f"Error creating transparent image: {str(e)}")
-        return None
-
-
-def process_signature(image, crop_bounds, threshold_value, ink_color, edge_refinement, kernel_size):
-    """Complete processing pipeline."""
-    try:
-        if crop_bounds:
-            image = manual_crop(image, *crop_bounds)
-        mask = apply_threshold(image, threshold_value)
-        if mask is None:
-            return None
-        if edge_refinement:
-            mask = refine_edges(mask, kernel_size)
-        transparent = create_transparent_signature(image, mask, ink_color)
-        return transparent
+        rgba = np.zeros((h, w, 4), dtype=np.uint8)
+        
+        # Set ink color where mask is active
+        rgba[mask > 0] = [r, g, b, 255]
+        
+        return rgba
+        
     except Exception as e:
         st.error(f"Error processing signature: {str(e)}")
+        return None
+
+
+def create_preview(rgba_image, bg_type="white"):
+    """
+    Create a preview of the transparent signature.
+    Shows signature on white or checkerboard background.
+    """
+    try:
+        h, w = rgba_image.shape[:2]
+        
+        if bg_type == "checkerboard":
+            # Create checkerboard pattern
+            tile_size = 20
+            tiles_x = (w + tile_size - 1) // tile_size
+            tiles_y = (h + tile_size - 1) // tile_size
+            
+            checkerboard = np.zeros((h, w, 3), dtype=np.uint8)
+            for i in range(tiles_y):
+                for j in range(tiles_x):
+                    if (i + j) % 2 == 0:
+                        y1 = i * tile_size
+                        x1 = j * tile_size
+                        y2 = min(y1 + tile_size, h)
+                        x2 = min(x1 + tile_size, w)
+                        checkerboard[y1:y2, x1:x2] = [240, 240, 240]
+                    else:
+                        y1 = i * tile_size
+                        x1 = j * tile_size
+                        y2 = min(y1 + tile_size, h)
+                        x2 = min(x1 + tile_size, w)
+                        checkerboard[y1:y2, x1:x2] = [200, 200, 200]
+            background = checkerboard
+        else:
+            # White background
+            background = np.ones((h, w, 3), dtype=np.uint8) * 255
+        
+        # Alpha composite
+        alpha = rgba_image[:, :, 3:4].astype(float) / 255.0
+        rgb = rgba_image[:, :, :3].astype(float)
+        
+        composite = rgb * alpha + background.astype(float) * (1 - alpha)
+        composite = composite.astype(np.uint8)
+        
+        return composite
+        
+    except Exception as e:
+        st.error(f"Error creating preview: {str(e)}")
         return None
 
 
 def image_to_bytes(image_array):
     """Convert numpy array to bytes for download."""
     try:
-        img = Image.fromarray(image_array)
+        img = Image.fromarray(image_array, mode='RGBA')
         buf = io.BytesIO()
-        img.save(buf, format='PNG')
+        img.save(buf, format='PNG', optimize=True)
         return buf.getvalue()
     except Exception as e:
         st.error(f"Error converting image: {str(e)}")
@@ -210,128 +232,167 @@ def image_to_bytes(image_array):
 # ============================================================
 
 def main():
-    st.title("Transparent Signature Maker")
+    st.title("🖊️ Transparent Signature Maker")
     st.markdown("""
-    Convert a scanned handwritten signature into a clean, transparent PNG.
-    Automatically removes the paper background and allows custom ink color.
-
-    **Usage:**
-    1. Upload a signature image (JPG or PNG)
-    2. Adjust cropping if needed
-    3. Fine-tune background removal sensitivity
-    4. Choose ink color
+    Convert your scanned signature into a clean, transparent PNG ready for digital documents.
+    
+    **How to use:**
+    1. Upload a photo or scan of your signature
+    2. Adjust cropping to focus on the signature
+    3. Fine-tune the background removal
+    4. Choose your preferred ink color
     5. Download the transparent PNG
     """)
-
+    
+    # Sidebar controls
     with st.sidebar:
-        st.header("Upload and Adjust")
-        uploaded_file = st.file_uploader("Upload a signature image", type=['jpg', 'jpeg', 'png'])
-        if uploaded_file:
+        st.header("📤 Upload Signature")
+        uploaded_file = st.file_uploader(
+            "Choose an image file",
+            type=['jpg', 'jpeg', 'png'],
+            help="Upload a clear photo or scan of your signature"
+        )
+        
+        if uploaded_file is not None:
             if not validate_image(uploaded_file):
-                st.error("Invalid file type. Please upload a valid image.")
+                st.error("❌ Invalid file. Please upload a valid image.")
                 return
+            
             image = load_image(uploaded_file)
             if image is None:
                 return
-
+            
             st.session_state.original_image = image
-            st.success("Image uploaded successfully!")
-
-            st.header("Cropping")
-            auto_crop = st.checkbox("Auto-crop signature", value=True)
-            if auto_crop:
-                cropped, bounds = auto_crop_signature(image, padding=10)
-                st.session_state.cropped_image = cropped
-                crop_bounds = None
-            else:
-                st.subheader("Manual crop")
+            st.success("✅ Image uploaded successfully!")
+            
+            # Cropping section
+            st.header("✂️ Cropping")
+            crop_mode = st.radio(
+                "Crop mode",
+                ["Auto-crop", "Manual crop", "No crop"],
+                help="Auto-crop tries to detect the signature area automatically"
+            )
+            
+            if crop_mode == "Auto-crop":
+                cropped = auto_crop_signature(image, padding=20)
+            elif crop_mode == "Manual crop":
+                st.markdown("##### Adjust margins (pixels)")
                 col1, col2 = st.columns(2)
                 with col1:
-                    x_start = st.slider("Crop from left (px)", 0, image.shape[1] // 2, 0)
-                    y_start = st.slider("Crop from top (px)", 0, image.shape[0] // 2, 0)
+                    left = st.number_input("Left", 0, image.shape[1]//2, 0, 10)
+                    top = st.number_input("Top", 0, image.shape[0]//2, 0, 10)
                 with col2:
-                    x_end_margin = st.slider("Crop from right (px)", 0, image.shape[1] // 2, 0)
-                    y_end_margin = st.slider("Crop from bottom (px)", 0, image.shape[0] // 2, 0)
-
-                # Convert margin sliders to coordinates
-                x_end = image.shape[1] - x_end_margin
-                y_end = image.shape[0] - y_end_margin
-                crop_bounds = (x_start, y_start, x_end, y_end)
-                st.session_state.cropped_image = manual_crop(image, *crop_bounds)
-
-            st.header("Background Removal")
-            threshold_value = st.slider(
-                "Background removal sensitivity",
-                80, 220, 150,
-                help="Move right to remove more of the paper background."
+                    right = st.number_input("Right", 0, image.shape[1]//2, 0, 10)
+                    bottom = st.number_input("Bottom", 0, image.shape[0]//2, 0, 10)
+                cropped = manual_crop(image, left, top, right, bottom)
+            else:
+                cropped = image
+            
+            # Processing settings
+            st.header("🎨 Signature Settings")
+            
+            threshold = st.slider(
+                "Background removal",
+                min_value=100,
+                max_value=200,
+                value=150,
+                step=5,
+                help="Lower values keep more detail, higher values remove more background"
             )
-
-            st.header("Ink Color")
-            ink_color = st.color_picker("Select ink color", "#000000")
-
-            st.header("Edge Refinement")
-            edge_refinement = st.checkbox("Smooth edges", value=True)
-            kernel_size = st.slider("Smoothing strength", 1, 5, 2) if edge_refinement else 2
-
-            # Automatically process image
+            
+            ink_color = st.color_picker(
+                "Ink color",
+                value="#000000",
+                help="Choose the color for your signature"
+            )
+            
+            st.header("✨ Enhancement")
+            smooth_edges = st.checkbox("Smooth edges", value=True)
+            smooth_strength = 2
+            if smooth_edges:
+                smooth_strength = st.slider(
+                    "Smoothing strength",
+                    min_value=2,
+                    max_value=5,
+                    value=2,
+                    help="Higher values create smoother edges"
+                )
+            
+            # Preview background
+            st.header("👁️ Preview Options")
+            preview_bg = st.radio(
+                "Preview background",
+                ["White", "Checkerboard"],
+                help="Choose how to preview transparency"
+            )
+            
+            # Process the signature
             processed = process_signature(
-                st.session_state.cropped_image if auto_crop else image,
-                crop_bounds if not auto_crop else None,
-                threshold_value, ink_color, edge_refinement, kernel_size
+                cropped,
+                threshold_value=threshold,
+                ink_color=ink_color,
+                smooth_edges=smooth_edges,
+                smooth_strength=smooth_strength
             )
+            
             if processed is not None:
                 st.session_state.processed_image = processed
-
+    
     # Main content area
     if st.session_state.original_image is not None:
-        # Align headings and images in the same row
         col1, col2 = st.columns(2, gap="large")
+        
         with col1:
-            st.markdown("<h4 style='text-align:center;'>Original Image</h4>", unsafe_allow_html=True)
+            st.markdown("### Original Image")
+            st.image(st.session_state.original_image, use_container_width=True)
+        
         with col2:
-            st.markdown("<h4 style='text-align:center;'>Processed Signature</h4>", unsafe_allow_html=True)
-
-        col1, col2 = st.columns(2, gap="large")
-        with col1:
-            st.image(st.session_state.original_image, width="stretch")
-
-        with col2:
+            st.markdown("### Processed Signature")
+            
             if st.session_state.processed_image is not None:
-                rgba = st.session_state.processed_image
-                h, w, _ = rgba.shape
-
-                # Create checkerboard background
-                tile = 30
-                pattern = np.array([[230, 180], [180, 230]], dtype=np.uint8)
-                tiles_y = int(np.ceil(h / (2 * tile)))
-                tiles_x = int(np.ceil(w / (2 * tile)))
-                cb = np.tile(pattern, (tiles_y * tile, tiles_x * tile))
-                cb = cb[:h, :w]
-                checker_bg = cv2.merge([cb, cb, cb]).astype(np.uint8)
-
-                # Proper alpha compositing over checkerboard
-                alpha = rgba[:, :, 3].astype(float) / 255.0
-                rgb = rgba[:, :, :3].astype(float)
-                composite = (rgb * alpha[..., None] + checker_bg * (1 - alpha[..., None])).astype(np.uint8)
-
-                # Display composite with single descriptive caption
-                st.image(composite, width="stretch", caption="Transparency preview")
-
-                # Download button
-                img_bytes = image_to_bytes(rgba)
-                if img_bytes:
-                    filename = uploaded_file.name.rsplit('.', 1)[0] + "_transparent.png"
-                    st.download_button(
-                        "Download Transparent PNG",
-                        data=img_bytes,
-                        file_name=filename,
-                        mime="image/png",
-                        use_container_width=True
-                    )
+                # Create preview
+                preview_bg_type = "checkerboard" if "Checkerboard" in preview_bg else "white"
+                preview = create_preview(st.session_state.processed_image, preview_bg_type)
+                
+                if preview is not None:
+                    st.image(preview, use_container_width=True)
+                    
+                    # Download section
+                    st.markdown("---")
+                    img_bytes = image_to_bytes(st.session_state.processed_image)
+                    if img_bytes:
+                        filename = uploaded_file.name.rsplit('.', 1)[0] + "_signature.png"
+                        col_dl1, col_dl2 = st.columns(2)
+                        with col_dl1:
+                            st.download_button(
+                                label="📥 Download PNG",
+                                data=img_bytes,
+                                file_name=filename,
+                                mime="image/png",
+                                use_container_width=True,
+                                type="primary"
+                            )
+                        with col_dl2:
+                            file_size = len(img_bytes) / 1024
+                            st.metric("File size", f"{file_size:.1f} KB")
+                else:
+                    st.error("Failed to create preview")
             else:
-                st.info("Adjust parameters to generate the transparent signature.")
+                st.info("Adjust the settings in the sidebar to process your signature")
     else:
-        st.info("Upload a scanned signature to begin.")
+        # Welcome screen
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.info("👈 Upload a signature image in the sidebar to get started")
+            
+            with st.expander("ℹ️ Tips for best results"):
+                st.markdown("""
+                - Use a white or light-colored paper
+                - Sign with a dark pen (black or blue works best)
+                - Ensure good lighting without shadows
+                - Keep the signature flat and straight
+                - Higher resolution images produce better results
+                """)
 
 
 if __name__ == "__main__":
