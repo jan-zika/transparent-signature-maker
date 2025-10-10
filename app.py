@@ -217,6 +217,18 @@ def create_preview(rgba_image, bg_type="white"):
         return None
 
 
+def image_to_bytes(image_array):
+    """Convert numpy array to bytes for download."""
+    try:
+        img = Image.fromarray(image_array, mode='RGBA')
+        buf = io.BytesIO()
+        img.save(buf, format='PNG', optimize=True)
+        return buf.getvalue()
+    except Exception as e:
+        st.error(f"Error converting image: {str(e)}")
+        return None
+
+
 # ============================================================
 # Main App
 # ============================================================
