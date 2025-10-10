@@ -47,44 +47,50 @@ def load_image(uploaded_file):
 def auto_crop_signature(image, padding=10, min_area_ratio=0.001, max_distance_ratio=0.15):
     """
     Automatically crop signature region from image, ignoring small isolated dots.
-    Groups nearby contours and ignores outliers for robust cropping.
+    Groups nearby contours and ignores outliers. Works across all OpenCV return formats.
     """
     try:
         gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY) if len(image.shape) == 3 else image.copy()
         _, binary = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)
 
-        # Handle different OpenCV return formats safely
-        contours_data = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if len(contours_data) == 2:
-            contours, _ = contours_data
-        elif len(contours_data) == 3:
-            _, contours, _ = contours_data
+        # --- Robust handling of different cv2.findContours() return signatures ---
+        result = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        if isinstance(result, tuple):
+            # Typical 2- or 3-element tuple
+            if len(result) == 2:
+                contours, hierarchy = result
+            elif len(result) == 3:
+                _, contours, hierarchy = result
+            else:
+                st.error("Unexpected cv2.findContours return length.")
+                return image, (0, 0, image.shape[1], image.shape[0])
         else:
-            st.error("Unexpected return value from cv2.findContours()")
+            # Defensive fallback — result is a single non-iterable object
+            st.error("cv2.findContours returned an unexpected type.")
             return image, (0, 0, image.shape[1], image.shape[0])
 
         if not contours:
             return image, (0, 0, image.shape[1], image.shape[0])
 
-        # Filter out very small areas (noise, dust)
+        # --- Filter out very small areas (noise, dust) ---
         h, w = gray.shape
         min_area = h * w * min_area_ratio
         contours = [c for c in contours if cv2.contourArea(c) > min_area]
         if not contours:
             return image, (0, 0, image.shape[1], image.shape[0])
 
-        # Compute centroids
+        # --- Compute centroids and remove distant outliers ---
         centroids = np.array([np.mean(c.reshape(-1, 2), axis=0) for c in contours])
         overall_center = np.mean(centroids, axis=0)
         max_distance = np.sqrt(h**2 + w**2) * max_distance_ratio
 
-        # Keep contours close to main cluster
         dists = np.linalg.norm(centroids - overall_center, axis=1)
         filtered = [c for c, d in zip(contours, dists) if d < max_distance]
         if not filtered:
             filtered = contours
 
-        # Bounding box over filtered contours
+        # --- Bounding box over filtered contours ---
         x_min, y_min = image.shape[1], image.shape[0]
         x_max, y_max = 0, 0
         for c in filtered:
@@ -97,6 +103,7 @@ def auto_crop_signature(image, padding=10, min_area_ratio=0.001, max_distance_ra
         y_max = min(image.shape[0], y_max + padding)
 
         return image[y_min:y_max, x_min:x_max], (x_min, y_min, x_max, y_max)
+
     except Exception as e:
         st.error(f"Error in auto-cropping: {str(e)}")
         return image, (0, 0, image.shape[1], image.shape[0])
